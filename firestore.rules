@@ -1,0 +1,199 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, role (admin|staff|student), department, academic_id
+    //
+    // Collection: exams
+    // Fields: type, subject_name, code, year, semester, pdf_url, department, createdBy, createdAt
+    //
+    // Collection: grades
+    // Fields: student_id, academic_id, student_name, test_id, subject_name, score, grade_label, status, department, year, semester
+    //
+    // Collection: students
+    // Fields: academic_id, full_name, email, phone, college_id, major_id, current_year, current_semester, status, createdAt
+    //
+    // Collection: subjects
+    // Fields: code, name, major_id, college_id, credits, description
+    //
+    // Collection: majors
+    // Fields: name, college_id, code
+    //
+    // Collection: colleges
+    // Fields: name, code
+    //
+    // Collection: academic_periods
+    // Fields: year, semester, isActive
+    //
+    // Collection: audit_logs
+    // Fields: userId, userName, action, resource, details, timestamp
+    //
+    // Collection: statistics
+    // Fields: subjectId, subjectName, majorId, majorName, academicYear, termName, totalStudents, highestScore, lowestScore, averageScore, successRate, updatedAt
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "wlydtll9641@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isStaff() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'staff';
+    }
+
+    function isStudent() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student';
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Validation Functions
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.role in ['admin', 'staff', 'student'] &&
+             data.email is string && data.email.size() < 100;
+    }
+
+    function isValidExam(data) {
+      return data.keys().hasAll(['type', 'subject_name', 'code', 'year', 'semester', 'pdf_url', 'department']) &&
+             data.type in ['Final', 'Monthly', 'Quiz'] &&
+             data.semester in ['Semester 1', 'Semester 2', 'Summer'] &&
+             data.subject_name is string && data.subject_name.size() < 100;
+    }
+
+    function isValidGrade(data) {
+      return data.keys().hasAll(['student_id', 'test_id', 'score', 'grade_label', 'status']) &&
+             data.score is number && data.score >= 0 && data.score <= 100 &&
+             data.grade_label in ['Excellent', 'Very Good', 'Good', 'Pass', 'Fail'] &&
+             data.status in ['Pass', 'Fail'];
+    }
+
+    // ERP Validation Functions
+    function isValidStudent(data) {
+      return data.keys().hasAll(['academic_id', 'full_name', 'college_id', 'major_id']) &&
+             data.academic_id is string && data.academic_id.size() < 50 &&
+             data.full_name is string && data.full_name.size() < 100;
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['code', 'name', 'major_id', 'college_id']) &&
+             data.code is string && data.code.size() < 20 &&
+             data.name is string && data.name.size() < 100;
+    }
+
+    function isValidMajor(data) {
+      return data.keys().hasAll(['name', 'college_id']) &&
+             data.name is string && data.name.size() < 100;
+    }
+
+    function isValidCollege(data) {
+      return data.keys().hasAll(['name']) &&
+             data.name is string && data.name.size() < 100;
+    }
+
+    function isValidAcademicPeriod(data) {
+      return data.keys().hasAll(['year', 'semester', 'isActive']) &&
+             data.year is string && data.year.size() < 10 &&
+             data.semester in ['Semester 1', 'Semester 2', 'Summer'] &&
+             data.isActive is bool;
+    }
+
+    // Rules
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data);
+      allow update: if isAdmin() || (isOwner(uid) && request.resource.data.role == resource.data.role);
+    }
+
+    match /exams/{examId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || (isStaff() && request.resource.data.department == getUserData().department);
+      allow update: if isAdmin() || (isStaff() && resource.data.department == getUserData().department);
+      allow delete: if isAdmin();
+    }
+
+    match /examRecords/{recordId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /grades/{gradeId} {
+      allow read: if isAdmin() || 
+                    (isStaff() && resource.data.department == getUserData().department) ||
+                    (isStudent() && resource.data.student_id == request.auth.uid);
+      allow create: if isAdmin() || (isStaff() && request.resource.data.department == getUserData().department);
+      allow update: if isAdmin() || (isStaff() && resource.data.department == getUserData().department);
+      allow delete: if isAdmin();
+    }
+
+    // ERP Rules
+    match /students/{studentId} {
+      allow read: if isAdmin() || isStaff() || isOwner(studentId);
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /majors/{majorId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /colleges/{collegeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /academic_periods/{periodId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isStaff();
+      allow update: if isAdmin() || isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated(); // Allow any authenticated user to log their actions
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /statistics/{statId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isStaff();
+    }
+  }
+}
